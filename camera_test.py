@@ -26,6 +26,19 @@ from config_test import (
     TOC_ORDER
 )
 
+# =========================================================
+# T39 USB 4K CAMERA -> FIXED FOCUS 2K MODE
+# CAM3 uses a 4K USB camera, but the app captures 2K for OCR speed/stability.
+# These values intentionally override config_test USB_WIDTH/HEIGHT/FPS.
+# =========================================================
+USB_CAPTURE_WIDTH = 2304
+USB_CAPTURE_HEIGHT = 1296
+USB_CAPTURE_FPS = 5
+USB_CAPTURE_FOURCC = "MJPG"
+USB_AUTOFOCUS_ENABLE = False
+USB_FIXED_FOCUS_VALUE = None  # Set an integer only if your UVC camera supports manual focus.
+
+
 def gray_from_frame(frame):
     gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
     gray = cv2.GaussianBlur(gray, (21, 21), 0)
@@ -185,13 +198,32 @@ class UsbCameraTest:
         self.status(f"Opening /dev/video{self.device}")
 
         self.cap = cv2.VideoCapture(f"/dev/video{self.device}", cv2.CAP_V4L2)
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, USB_WIDTH)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, USB_HEIGHT)
-        self.cap.set(cv2.CAP_PROP_FPS, USB_FPS)
+
+        # T39: Force USB 4K camera to work as 2K fixed-focus camera.
+        # Set MJPG first, then resolution/FPS. This is usually required for high resolution via V4L2.
+        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*USB_CAPTURE_FOURCC))
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, USB_CAPTURE_WIDTH)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, USB_CAPTURE_HEIGHT)
+        self.cap.set(cv2.CAP_PROP_FPS, USB_CAPTURE_FPS)
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+        # Disable autofocus for UVC cameras. Some cameras ignore these controls,
+        # but calling them is safe. If manual focus is supported, set USB_FIXED_FOCUS_VALUE.
+        try:
+            self.cap.set(cv2.CAP_PROP_AUTOFOCUS, 0 if not USB_AUTOFOCUS_ENABLE else 1)
+            if USB_FIXED_FOCUS_VALUE is not None:
+                self.cap.set(cv2.CAP_PROP_FOCUS, int(USB_FIXED_FOCUS_VALUE))
+        except Exception as e:
+            print("USB focus control warning:", e)
 
         if not self.cap.isOpened():
             raise RuntimeError(f"Cannot open USB camera /dev/video{self.device}")
+
+        actual_w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        actual_h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        actual_fps = self.cap.get(cv2.CAP_PROP_FPS)
+        self.status(f"USB mode requested {USB_CAPTURE_WIDTH}x{USB_CAPTURE_HEIGHT}@{USB_CAPTURE_FPS}fps MJPG fixed-focus")
+        self.status(f"USB mode actual {actual_w}x{actual_h}@{actual_fps:.1f}fps")
 
         self.load_yolo_if_available()
 
@@ -256,7 +288,7 @@ class UsbCameraTest:
                     "box": [x1, y1, x2, y2]
                 })
 
-        # ถ้า class ซ้ำ เลือก conf สูงสุด
+        # เธ–เนเธฒ class เธเนเธณ เน€เธฅเธทเธญเธ conf เธชเธนเธเธชเธธเธ”
         best_by_class = {}
 
         for det in detections:
@@ -300,15 +332,15 @@ class UsbCameraTest:
 
     def capture_direct_or_yolo(self, path, running_check=lambda: True):
         """
-        ถ้ามี YOLO:
+        เธ–เนเธฒเธกเธต YOLO:
         - detect
-        - hold ตามเวลาที่ตั้งไว้
+        - hold เธ•เธฒเธกเน€เธงเธฅเธฒเธ—เธตเนเธ•เธฑเนเธเนเธงเน
         - save full image
-        - return image_path + detections เพื่อเอาไป crop OCR ตาม box
+        - return image_path + detections เน€เธเธทเนเธญเน€เธญเธฒเนเธ crop OCR เธ•เธฒเธก box
 
-        ถ้าไม่มี YOLO:
+        เธ–เนเธฒเนเธกเนเธกเธต YOLO:
         - save full image
-        - return detections ว่าง
+        - return detections เธงเนเธฒเธ
         """
         if self.model is None:
             self.status("Capture Direct Mode")
